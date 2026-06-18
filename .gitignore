@@ -15,6 +15,7 @@ logs/
 node_modules/
 dist/
 build/
+.angular/
 .next/
 .nuxt/
 .output/
