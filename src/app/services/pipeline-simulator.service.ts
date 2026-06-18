@@ -118,7 +118,6 @@ export class PipelineSimulatorService {
     if (this.isComplete()) return false;
 
     this.state.cycle++;
-    const stages = getPipelineStages(this.config.model);
     const cycle = this.state.cycle;
 
     if (this.config.model === 'superscalar-2way') {
@@ -126,32 +125,184 @@ export class PipelineSimulatorService {
       return !this.isComplete();
     }
 
-    this.wbStage(cycle, 'WB');
+    const ifStageName = this.config.model === '7-stage' ? 'IF1' : 'IF';
+    const idStageName = 'ID';
+    const memStageName = 'MEM';
+    const wbStageName = 'WB';
+
+    const stallNeeded = this.checkStallNeeded();
+    const useStall = stallNeeded && this.config.enableStallInsertion && !this.config.enableForwarding;
+
+    this.wbStage(cycle, wbStageName);
+    this.memStage(cycle, memStageName);
 
     if (this.config.model === '7-stage') {
-      this.memStage(cycle, 'MEM');
       this.exStage(cycle, 'EX2');
-      this.exStage(cycle, 'EX1');
+      if (useStall) {
+        this.insertBubbleIntoExStage(cycle, 'EX1');
+      } else {
+        this.exStage(cycle, 'EX1');
+      }
     } else {
-      this.memStage(cycle, 'MEM');
-      this.exStage(cycle, 'EX');
+      if (useStall) {
+        this.insertBubbleIntoExStage(cycle, 'EX');
+      } else {
+        this.exStage(cycle, 'EX');
+      }
     }
 
-    this.idStage(cycle, this.config.model === '7-stage' ? 'ID' : 'ID');
-
-    if (this.config.model === '7-stage') {
-      this.ifStage(cycle, 'IF2');
-      this.ifStage(cycle, 'IF1');
+    if (useStall) {
+      this.state.stallCount++;
+      this.stallIdAndIf(cycle);
     } else {
-      this.ifStage(cycle, 'IF');
+      this.idStage(cycle, idStageName);
+      this.ifStage(cycle, ifStageName);
     }
+
+    this.detectAndRecordHazards(cycle);
 
     return !this.isComplete();
   }
 
+  private checkStallNeeded(): boolean {
+    if (!this.config.enableStallInsertion || this.config.enableForwarding) return false;
+
+    const idReg = this.state.pipelineRegisters.get('ID');
+    if (!idReg?.instruction) return false;
+
+    const idInstr = idReg.instruction;
+    if (idInstr.isNop) return false;
+
+    const exReg = this.state.pipelineRegisters.get(this.config.model === '7-stage' ? 'EX1' : 'EX');
+    const memReg = this.state.pipelineRegisters.get('MEM');
+
+    const exInstr = exReg?.instruction;
+    const memInstr = memReg?.instruction;
+
+    if (exInstr && exInstr.needsWriteback && exInstr.rd !== undefined && exInstr.rd !== 0) {
+      if ((idInstr.rs1 !== undefined && idInstr.rs1 === exInstr.rd) ||
+          (idInstr.rs2 !== undefined && idInstr.rs2 === exInstr.rd)) {
+        return true;
+      }
+    }
+
+    if (memInstr && memInstr.needsWriteback && memInstr.rd !== undefined && memInstr.rd !== 0) {
+      if ((idInstr.rs1 !== undefined && idInstr.rs1 === memInstr.rd) ||
+          (idInstr.rs2 !== undefined && idInstr.rs2 === memInstr.rd)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private stallIdAndIf(cycle: number): void {
+    const ifStageName = this.config.model === '7-stage' ? 'IF1' : 'IF';
+    const if2StageName = this.config.model === '7-stage' ? 'IF2' : null;
+
+    const idReg = this.state.pipelineRegisters.get('ID')!;
+    if (idReg.instruction) {
+      const instr = idReg.instruction;
+      if (instr.rs1 !== undefined) {
+        idReg.rs1Value = readRegister(this.state.registerFile, instr.rs1);
+      }
+      if (instr.rs2 !== undefined) {
+        idReg.rs2Value = readRegister(this.state.registerFile, instr.rs2);
+      }
+      this.recordTimeline(instr, 'ID', cycle, false, true);
+    } else {
+      this.recordTimeline(null, 'ID', cycle, true);
+    }
+
+    if (if2StageName) {
+      const if2Reg = this.state.pipelineRegisters.get(if2StageName)!;
+      if (if2Reg.instruction) {
+        this.recordTimeline(if2Reg.instruction, 'IF2', cycle, false, true);
+      } else {
+        this.recordTimeline(null, 'IF2', cycle, true);
+      }
+    }
+
+    const ifReg = this.state.pipelineRegisters.get(ifStageName)!;
+    if (ifReg.instruction) {
+      this.recordTimeline(ifReg.instruction, ifStageName, cycle, false, true);
+    } else {
+      this.recordTimeline(null, ifStageName, cycle, true);
+    }
+  }
+
+  private insertBubbleIntoExStage(cycle: number, stageName: PipelineStage): void {
+    const bubble = createEmptyPipelineRegister();
+    bubble.isBubble = true;
+    this.state.pipelineRegisters.set(stageName, bubble);
+    this.recordTimeline(null, stageName as PipelineStage, cycle, true);
+  }
+
+  private detectAndRecordHazards(cycle: number): void {
+    const idReg = this.state.pipelineRegisters.get('ID');
+    if (!idReg?.instruction || idReg.instruction.isNop) return;
+
+    const idInstr = idReg.instruction;
+
+    const stagesToCheck = this.config.model === '7-stage'
+      ? ['EX1', 'EX2', 'MEM']
+      : ['EX', 'MEM'];
+
+    for (const stageName of stagesToCheck) {
+      const preg = this.state.pipelineRegisters.get(stageName);
+      if (!preg?.instruction || preg.instruction.isNop) continue;
+
+      const prevInstr = preg.instruction;
+      if (!prevInstr.needsWriteback || prevInstr.rd === undefined) continue;
+
+      if (idInstr.rs1 !== undefined && idInstr.rs1 === prevInstr.rd && idInstr.rs1 !== 0) {
+        const alreadyRecorded = this.state.hazards.some(h =>
+          h.type === HazardType.RAW &&
+          h.instructionId2 === idInstr.id &&
+          h.register === prevInstr.rd &&
+          h.cycle === cycle
+        );
+
+        if (!alreadyRecorded) {
+          const hazard: Hazard = {
+            type: HazardType.RAW,
+            instructionId1: prevInstr.id,
+            instructionId2: idInstr.id,
+            register: prevInstr.rd,
+            description: `RAW冒险: 指令读取 x${prevInstr.rd}，但前一条指令尚未写回`,
+            cycle,
+            resolved: this.config.enableForwarding
+          };
+          this.state.hazards.push(hazard);
+        }
+      }
+
+      if (idInstr.rs2 !== undefined && idInstr.rs2 === prevInstr.rd && idInstr.rs2 !== 0) {
+        const alreadyRecorded = this.state.hazards.some(h =>
+          h.type === HazardType.RAW &&
+          h.instructionId2 === idInstr.id &&
+          h.register === prevInstr.rd &&
+          h.cycle === cycle
+        );
+
+        if (!alreadyRecorded) {
+          const hazard: Hazard = {
+            type: HazardType.RAW,
+            instructionId1: prevInstr.id,
+            instructionId2: idInstr.id,
+            register: prevInstr.rd,
+            description: `RAW冒险: 指令读取 x${prevInstr.rd}，但前一条指令尚未写回`,
+            cycle,
+            resolved: this.config.enableForwarding
+          };
+          this.state.hazards.push(hazard);
+        }
+      }
+    }
+  }
+
   private stepSuperscalar(): void {
     const cycle = this.state.cycle;
-    const stages = PIPELINE_STAGES_5;
 
     for (let pipe = 0; pipe < 2; pipe++) {
       const pregs = pipe === 0 ? this.state.pipelineRegisters : this.state.superscalarPipe!.pipelineRegisters2;
@@ -173,10 +324,8 @@ export class PipelineSimulatorService {
   }
 
   private ifStage(cycle: number, stageName: PipelineStage): void {
-    const stages = getPipelineStages(this.config.model);
     const ifStageName = this.config.model === '7-stage' ? 'IF1' : 'IF';
-    const nextIfStage = this.config.model === '7-stage' ? 'IF2' : 'ID';
-    const idStage = this.config.model === '7-stage' ? 'ID' : 'ID';
+    const idStage = 'ID';
 
     if (stageName === ifStageName) {
       const idReg = this.state.pipelineRegisters.get(idStage)!;
@@ -212,11 +361,7 @@ export class PipelineSimulatorService {
         newReg.pc = instr.address;
         newReg.nextPc = nextPc;
 
-        if (this.config.model === '7-stage') {
-          this.state.pipelineRegisters.set('IF1', newReg);
-        } else {
-          this.state.pipelineRegisters.set('IF', newReg);
-        }
+        this.state.pipelineRegisters.set(ifStageName, newReg);
 
         if (!this.state.instructionStartCycle.has(instr.id)) {
           this.state.instructionStartCycle.set(instr.id, cycle);
@@ -228,10 +373,15 @@ export class PipelineSimulatorService {
       }
     } else if (stageName === 'IF2' && this.config.model === '7-stage') {
       const if1Reg = this.state.pipelineRegisters.get('IF1')!;
-      this.state.pipelineRegisters.set('IF2', { ...if1Reg });
+      const newReg = createEmptyPipelineRegister();
       if (if1Reg.instruction) {
+        newReg.instruction = if1Reg.instruction;
+        newReg.pc = if1Reg.pc;
+        newReg.nextPc = if1Reg.nextPc;
+        this.state.pipelineRegisters.set('IF2', newReg);
         this.recordTimeline(if1Reg.instruction, stageName, cycle, false);
       } else {
+        this.state.pipelineRegisters.set('IF2', newReg);
         this.recordTimeline(null, stageName, cycle, true);
       }
     }
@@ -240,20 +390,11 @@ export class PipelineSimulatorService {
   private idStage(cycle: number, stageName: PipelineStage): void {
     const prevStage = this.config.model === '7-stage' ? 'IF2' : 'IF';
     const prevReg = this.state.pipelineRegisters.get(prevStage)!;
-    const currentReg = this.state.pipelineRegisters.get(stageName)!;
-
-    if (prevReg.stalled) {
-      this.state.pipelineRegisters.set(stageName, { ...prevReg, stalled: true });
-      if (prevReg.instruction) {
-        this.recordTimeline(prevReg.instruction, stageName, cycle, false, true);
-      } else {
-        this.recordTimeline(null, stageName, cycle, true);
-      }
-      return;
-    }
 
     if (prevReg.isBubble || !prevReg.instruction) {
-      this.state.pipelineRegisters.set(stageName, createEmptyPipelineRegister());
+      const bubble = createEmptyPipelineRegister();
+      bubble.isBubble = true;
+      this.state.pipelineRegisters.set(stageName, bubble);
       this.recordTimeline(null, stageName, cycle, true);
       return;
     }
@@ -272,34 +413,16 @@ export class PipelineSimulatorService {
     }
     newReg.immediate = instr.immediate || 0;
 
-    const stallNeeded = this.detectDataHazardsForStall(instr, cycle);
-    if (stallNeeded && this.config.enableStallInsertion && !this.config.enableForwarding) {
-      newReg.stalled = true;
-      prevReg.stalled = true;
-      this.state.stallCount++;
-
-      const exStage = this.config.model === '7-stage' ? 'EX1' : 'EX';
-      this.state.pipelineRegisters.set(exStage, createEmptyPipelineRegister());
-
-      if (instr.rs1 !== undefined && this.isRegisterUsedAfter(instr, instr.rs1)) {
-        const hazard: Hazard = {
-          type: HazardType.RAW,
-          instructionId1: this.findWriterOfRegister(instr.rs1) || '',
-          instructionId2: instr.id,
-          register: instr.rs1,
-          description: `RAW冒险: x${instr.rs1} 需要等待写入完成`,
-          cycle
-        };
-        this.state.hazards.push(hazard);
-      }
-    }
-
     if (instr.rd !== undefined && instr.needsWriteback) {
       markRegisterBusy(this.state.registerFile, instr.rd, instr.id);
     }
 
+    if (this.config.branchPrediction) {
+      (newReg as any).predictedBranch = (prevReg as any).predictedBranch;
+    }
+
     this.state.pipelineRegisters.set(stageName, newReg);
-    this.recordTimeline(instr, stageName, cycle, false, stallNeeded);
+    this.recordTimeline(instr, stageName, cycle, false);
   }
 
   private exStage(cycle: number, stageName: PipelineStage): void {
@@ -310,7 +433,8 @@ export class PipelineSimulatorService {
     const newReg = createEmptyPipelineRegister();
 
     if (!prevReg.instruction || prevReg.isBubble) {
-      this.state.pipelineRegisters.set(stageName, createEmptyPipelineRegister());
+      newReg.isBubble = true;
+      this.state.pipelineRegisters.set(stageName, newReg);
       this.recordTimeline(null, stageName, cycle, true);
       return;
     }
@@ -327,15 +451,15 @@ export class PipelineSimulatorService {
     let rs1Val = prevReg.rs1Value || 0;
     let rs2Val = prevReg.rs2Value || 0;
 
-    if (this.config.enableForwarding) {
-      const forward1 = this.checkForwarding(instr, instr.rs1, 'rs1', cycle);
+    if (this.config.enableForwarding && stageName === (this.config.model === '7-stage' ? 'EX1' : 'EX')) {
+      const forward1 = this.checkForwarding(instr, instr.rs1, 'rs1');
       if (forward1) {
         rs1Val = forward1.value;
         newReg.forwardRs1From = forward1.fromStage as any;
         this.state.forwardingPaths.push(forward1);
       }
 
-      const forward2 = this.checkForwarding(instr, instr.rs2, 'rs2', cycle);
+      const forward2 = this.checkForwarding(instr, instr.rs2, 'rs2');
       if (forward2) {
         rs2Val = forward2.value;
         newReg.forwardRs2From = forward2.fromStage as any;
@@ -370,7 +494,7 @@ export class PipelineSimulatorService {
     newReg.aluResult = aluResult;
     newReg.writeData = rs2Val;
 
-    if (instr.isBranch) {
+    if (instr.isBranch && stageName === (this.config.model === '7-stage' ? 'EX2' : 'EX')) {
       let taken = false;
       switch (instr.opcode) {
         case Opcode.BEQ: taken = rs1Val === rs2Val; break;
@@ -392,7 +516,7 @@ export class PipelineSimulatorService {
         } else {
           this.state.branchStats.incorrect++;
           this.state.branchStats.mispredictionPenalty += 2;
-          this.flushPipelineAfter(cycle);
+          this.flushPipelineAfterBranch(cycle);
 
           const hazard: Hazard = {
             type: HazardType.CONTROL,
@@ -411,7 +535,7 @@ export class PipelineSimulatorService {
         );
       } else if (taken) {
         this.state.pc = targetAddr;
-        this.flushPipelineAfter(cycle);
+        this.flushPipelineAfterBranch(cycle);
         const hazard: Hazard = {
           type: HazardType.CONTROL,
           instructionId1: instr.id,
@@ -425,13 +549,13 @@ export class PipelineSimulatorService {
       this.state.branchStats.accuracy = this.state.branchStats.totalBranches > 0
         ? this.state.branchStats.correct / this.state.branchStats.totalBranches
         : 0;
-    } else if (instr.isJump && instr.opcode === Opcode.JAL) {
+    } else if (instr.isJump && instr.opcode === Opcode.JAL && stageName === (this.config.model === '7-stage' ? 'EX2' : 'EX')) {
       const targetAddr = instr.address + (instr.immediate || 0) * 4;
       this.state.pc = targetAddr;
-      this.flushPipelineAfter(cycle);
-    } else if (instr.isJump && instr.opcode === Opcode.JALR) {
+      this.flushPipelineAfterBranch(cycle);
+    } else if (instr.isJump && instr.opcode === Opcode.JALR && stageName === (this.config.model === '7-stage' ? 'EX2' : 'EX')) {
       this.state.pc = aluResult;
-      this.flushPipelineAfter(cycle);
+      this.flushPipelineAfterBranch(cycle);
     }
 
     this.state.pipelineRegisters.set(stageName, newReg);
@@ -444,7 +568,8 @@ export class PipelineSimulatorService {
     const newReg = createEmptyPipelineRegister();
 
     if (!prevReg.instruction || prevReg.isBubble) {
-      this.state.pipelineRegisters.set(stageName, createEmptyPipelineRegister());
+      newReg.isBubble = true;
+      this.state.pipelineRegisters.set(stageName, newReg);
       this.recordTimeline(null, stageName, cycle, true);
       return;
     }
@@ -474,9 +599,11 @@ export class PipelineSimulatorService {
   private wbStage(cycle: number, stageName: PipelineStage): void {
     const prevStage = 'MEM';
     const prevReg = this.state.pipelineRegisters.get(prevStage)!;
+    const newReg = createEmptyPipelineRegister();
 
     if (!prevReg.instruction || prevReg.isBubble) {
-      this.state.pipelineRegisters.set(stageName, createEmptyPipelineRegister());
+      newReg.isBubble = true;
+      this.state.pipelineRegisters.set(stageName, newReg);
       this.recordTimeline(null, stageName, cycle, true);
       return;
     }
@@ -497,7 +624,6 @@ export class PipelineSimulatorService {
       this.state.completedInstructions.push(instr.id);
     }
 
-    const newReg = createEmptyPipelineRegister();
     newReg.instruction = instr;
     this.state.pipelineRegisters.set(stageName, newReg);
     this.recordTimeline(instr, stageName, cycle, false);
@@ -628,34 +754,29 @@ export class PipelineSimulatorService {
     this.recordTimeline(instr, stageName, cycle, false, false, pipe);
   }
 
-  private detectDataHazardsForStall(instr: Instruction, cycle: number): boolean {
-    if (instr.rs1 === undefined && instr.rs2 === undefined) return false;
-
-    const stages = getPipelineStages(this.config.model);
-    for (const stage of stages) {
-      const preg = this.state.pipelineRegisters.get(stage);
-      if (!preg?.instruction) continue;
-      const prevInstr = preg.instruction;
-
-      if (prevInstr.rd !== undefined) {
-        if (instr.rs1 === prevInstr.rd || instr.rs2 === prevInstr.rd) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
   private checkForwarding(
     currentInstr: Instruction,
     reg: number | undefined,
-    operandName: string,
-    cycle: number
+    operandName: string
   ): ForwardingPath | null {
     if (reg === undefined || reg === 0) return null;
 
-    const memStage = this.config.model === '7-stage' ? 'MEM' : 'MEM';
+    const memStage = 'MEM';
     const wbStage = 'WB';
+
+    const exStage = this.config.model === '7-stage' ? 'EX2' : 'EX';
+    const exReg = this.state.pipelineRegisters.get(exStage);
+    if (exReg?.instruction && exReg.instruction.rd === reg && exReg.instruction.needsWriteback && !exReg.instruction.isLoad) {
+      const value = exReg.aluResult || 0;
+      return {
+        fromInstructionId: exReg.instruction.id,
+        toInstructionId: currentInstr.id,
+        fromStage: this.config.model === '7-stage' ? 'EX2' : 'EX',
+        toStage: this.config.model === '7-stage' ? 'EX1' : 'EX',
+        register: reg,
+        value
+      };
+    }
 
     const memReg = this.state.pipelineRegisters.get(memStage);
     if (memReg?.instruction && memReg.instruction.rd === reg && memReg.instruction.needsWriteback) {
@@ -686,21 +807,6 @@ export class PipelineSimulatorService {
     return null;
   }
 
-  private findWriterOfRegister(reg: number): string | null {
-    const stages = getPipelineStages(this.config.model);
-    for (const stage of stages) {
-      const preg = this.state.pipelineRegisters.get(stage);
-      if (preg?.instruction?.rd === reg) {
-        return preg.instruction.id;
-      }
-    }
-    return null;
-  }
-
-  private isRegisterUsedAfter(instr: Instruction, reg: number): boolean {
-    return instr.rs1 === reg || instr.rs2 === reg;
-  }
-
   private hasDataDependency(instr1: Instruction | null, instr2: Instruction | null): boolean {
     if (!instr1 || !instr2) return false;
     if (instr1.rs1 !== undefined && instr2.rd === instr1.rs1) return true;
@@ -713,9 +819,11 @@ export class PipelineSimulatorService {
     return instr1.rd !== undefined && instr1.rd === instr2.rd;
   }
 
-  private flushPipelineAfter(cycle: number): void {
+  private flushPipelineAfterBranch(cycle: number): void {
     const stages = getPipelineStages(this.config.model);
-    for (let i = 0; i < stages.indexOf('EX'); i++) {
+    const exIdx = stages.indexOf(this.config.model === '7-stage' ? 'EX2' : 'EX');
+
+    for (let i = 0; i < exIdx; i++) {
       const stage = stages[i];
       const preg = this.state.pipelineRegisters.get(stage);
       if (preg?.instruction && !preg.instruction.isBranch && !preg.instruction.isJump) {
