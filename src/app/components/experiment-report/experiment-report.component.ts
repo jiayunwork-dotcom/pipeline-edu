@@ -135,7 +135,7 @@ BEQ x1, x2, loop"
           <div class="control-content">
             <button
               (click)="runAllExperiments()"
-              [disabled]="isRunning"
+              [disabled]="isRunning || !canRunExperiments"
               class="btn-large success"
             >
               <span *ngIf="!isRunning">🚀 运行全部实验</span>
@@ -157,9 +157,9 @@ BEQ x1, x2, loop"
               </div>
             </div>
 
-            <div *ngIf="parseErrors && parseErrors.length > 0" class="status-info">
+            <div *ngIf="!canRunExperiments" class="status-info">
               <div class="status-warning">
-                ⚠️ 指令解析错误，请检查代码格式
+                ⚠️ 请输入有效的指令代码，并确保至少配置 {{minGroups}} 组实验
               </div>
             </div>
           </div>
@@ -851,8 +851,7 @@ export class ExperimentReportComponent implements OnInit {
   readonly minGroups = 2;
   readonly maxGroups = 8;
 
-  assemblyCode: string = `# 流水线性能测试程序
-ADDI x1, x0, 10
+  assemblyCode: string = `ADDI x1, x0, 10
 ADDI x2, x0, 20
 ADD x3, x1, x2
 SUB x4, x1, x2
@@ -860,8 +859,10 @@ MUL x5, x3, x4
 SW x3, 0(x0)
 LW x6, 0(x0)
 ADD x7, x5, x6
+BEQ x1, x2, skip
 ADDI x8, x0, 100
 ADD x9, x8, x7
+skip:
 SW x9, 4(x0)`;
   parseErrors: ParseError[] = [];
 
@@ -897,7 +898,7 @@ SW x9, 4(x0)`;
   sortAscending = true;
 
   isExporting = false;
-  canRunExperiments = true;
+  canRunExperiments = false;
 
   readonly chartWidth = 800;
   readonly chartHeight = 300;
@@ -1014,7 +1015,7 @@ SW x9, 4(x0)`;
   }
 
   async runAllExperiments(): Promise<void> {
-    if (this.isRunning) return;
+    if (!this.canRunExperiments || this.isRunning) return;
 
     this.isRunning = true;
     this.completedCount = 0;

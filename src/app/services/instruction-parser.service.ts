@@ -77,6 +77,7 @@ export class InstructionParserService {
   private parseInstruction(line: string, address: number, index: number, labels: Map<string, number>): Instruction | null {
     const upperLine = line.toUpperCase().trim();
     const tokens = upperLine.split(/[\s,()]+/).filter(t => t.length > 0);
+    const originalTokens = line.trim().split(/[\s,()]+/).filter(t => t.length > 0);
 
     if (tokens.length === 0) return null;
 
@@ -133,24 +134,24 @@ export class InstructionParserService {
         if (tokens.length < 4) throw new Error('B型指令需要4个操作数');
         rs1 = this.parseRegister(tokens[1]);
         rs2 = this.parseRegister(tokens[2]);
-        const labelOrImm = tokens[3];
-        if (labels.has(labelOrImm)) {
-          labelRef = labelOrImm;
-          immediate = (labels.get(labelOrImm)! - address) / 4;
+        const bLabelOrImm = originalTokens[3];
+        if (labels.has(bLabelOrImm)) {
+          labelRef = bLabelOrImm;
+          immediate = (labels.get(bLabelOrImm)! - address) / 4;
         } else {
-          immediate = this.parseImmediate(labelOrImm);
+          immediate = this.parseImmediate(tokens[3]);
         }
         break;
 
       case InstructionType.J_TYPE:
         if (tokens.length < 3) throw new Error('J型指令需要3个操作数');
         rd = this.parseRegister(tokens[1]);
-        const jLabelOrImm = tokens[2];
+        const jLabelOrImm = originalTokens[2];
         if (labels.has(jLabelOrImm)) {
           labelRef = jLabelOrImm;
           immediate = (labels.get(jLabelOrImm)! - address) / 4;
         } else {
-          immediate = this.parseImmediate(jLabelOrImm);
+          immediate = this.parseImmediate(tokens[2]);
         }
         break;
 
