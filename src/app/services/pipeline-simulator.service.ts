@@ -192,23 +192,18 @@ export class PipelineSimulatorService {
     const idInstr = idReg.instruction;
     if (idInstr.isNop) return false;
 
-    const exReg = this.state.pipelineRegisters.get(this.config.model === '7-stage' ? 'EX1' : 'EX');
-    const memReg = this.state.pipelineRegisters.get('MEM');
+    const stagesToCheck = this.config.model === '7-stage'
+      ? ['EX1', 'EX2', 'MEM']
+      : ['EX', 'MEM'];
 
-    const exInstr = exReg?.instruction;
-    const memInstr = memReg?.instruction;
-
-    if (exInstr && exInstr.needsWriteback && exInstr.rd !== undefined && exInstr.rd !== 0) {
-      if ((idInstr.rs1 !== undefined && idInstr.rs1 === exInstr.rd) ||
-          (idInstr.rs2 !== undefined && idInstr.rs2 === exInstr.rd)) {
-        return true;
-      }
-    }
-
-    if (memInstr && memInstr.needsWriteback && memInstr.rd !== undefined && memInstr.rd !== 0) {
-      if ((idInstr.rs1 !== undefined && idInstr.rs1 === memInstr.rd) ||
-          (idInstr.rs2 !== undefined && idInstr.rs2 === memInstr.rd)) {
-        return true;
+    for (const stageName of stagesToCheck) {
+      const preg = this.state.pipelineRegisters.get(stageName);
+      const instr = preg?.instruction;
+      if (instr && instr.needsWriteback && instr.rd !== undefined && instr.rd !== 0) {
+        if ((idInstr.rs1 !== undefined && idInstr.rs1 === instr.rd) ||
+            (idInstr.rs2 !== undefined && idInstr.rs2 === instr.rd)) {
+          return true;
+        }
       }
     }
 
@@ -470,7 +465,8 @@ export class PipelineSimulatorService {
     let rs1Val = prevReg.rs1Value || 0;
     let rs2Val = prevReg.rs2Value || 0;
 
-    if (this.config.enableForwarding && stageName === (this.config.model === '7-stage' ? 'EX1' : 'EX')) {
+    const execStage = this.config.model === '7-stage' ? 'EX2' : 'EX';
+    if (this.config.enableForwarding && stageName === execStage) {
       const forward1 = this.checkForwarding(instr, instr.rs1, 'rs1');
       if (forward1) {
         rs1Val = forward1.value;
@@ -510,6 +506,8 @@ export class PipelineSimulatorService {
       default: aluResult = 0;
     }
 
+    newReg.rs1Value = rs1Val;
+    newReg.rs2Value = rs2Val;
     newReg.aluResult = aluResult;
     newReg.writeData = rs2Val;
 
@@ -644,6 +642,14 @@ export class PipelineSimulatorService {
     }
 
     newReg.instruction = instr;
+    newReg.aluResult = prevReg.aluResult;
+    newReg.memoryData = prevReg.memoryData;
+    newReg.writeData = prevReg.writeData;
+    newReg.regWrite = prevReg.regWrite;
+    newReg.memRead = prevReg.memRead;
+    newReg.memWrite = prevReg.memWrite;
+    newReg.pc = prevReg.pc;
+    newReg.nextPc = prevReg.nextPc;
     this.state.pipelineRegisters.set(stageName, newReg);
     this.recordTimeline(instr, stageName, cycle, false);
   }
@@ -730,6 +736,8 @@ export class PipelineSimulatorService {
       case Opcode.MUL: aluResult = rs1Val * rs2Val; break;
       default: aluResult = 0;
     }
+    newReg.rs1Value = rs1Val;
+    newReg.rs2Value = rs2Val;
     newReg.aluResult = aluResult;
     newReg.writeData = rs2Val;
     pregs.set(stageName, newReg);
@@ -791,7 +799,7 @@ export class PipelineSimulatorService {
         fromInstructionId: exReg.instruction.id,
         toInstructionId: currentInstr.id,
         fromStage: this.config.model === '7-stage' ? 'EX2' : 'EX',
-        toStage: this.config.model === '7-stage' ? 'EX1' : 'EX',
+        toStage: this.config.model === '7-stage' ? 'EX2' : 'EX',
         register: reg,
         value
       };
@@ -804,7 +812,7 @@ export class PipelineSimulatorService {
         fromInstructionId: memReg.instruction.id,
         toInstructionId: currentInstr.id,
         fromStage: 'MEM',
-        toStage: this.config.model === '7-stage' ? 'EX1' : 'EX',
+        toStage: this.config.model === '7-stage' ? 'EX2' : 'EX',
         register: reg,
         value
       };
@@ -817,7 +825,7 @@ export class PipelineSimulatorService {
         fromInstructionId: wbReg.instruction.id,
         toInstructionId: currentInstr.id,
         fromStage: 'WB',
-        toStage: this.config.model === '7-stage' ? 'EX1' : 'EX',
+        toStage: this.config.model === '7-stage' ? 'EX2' : 'EX',
         register: reg,
         value
       };
