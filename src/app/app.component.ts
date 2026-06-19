@@ -18,6 +18,9 @@ import { CommonModule } from '@angular/common';
             <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">
               模拟器
             </a>
+            <a routerLink="/gantt" routerLinkActive="active">
+              时序图
+            </a>
             <a routerLink="/levels" routerLinkActive="active">
               教学关卡
             </a>
