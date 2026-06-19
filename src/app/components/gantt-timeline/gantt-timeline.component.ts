@@ -310,7 +310,8 @@ LW x4, 0(x0)"
 
                       <g *ngIf="cell.hasForwarding">
                         <path
-                          [attr.d]="getForwardingArrowPath(c, i)"
+                          *ngFor="let idx of getForwardingArrowArray(getForwardingCount(i, c))"
+                          [attr.d]="getForwardingArrowPath(c, i, idx)"
                           fill="#27ae60"
                           stroke="#1e8449"
                           stroke-width="1"
@@ -900,6 +901,7 @@ ADD x6, x5, x1`;
   displayStages: PipelineStage[] = [];
   ganttGrid: (GanttCell | null)[][] = [];
   forwardingCycles = new Set<string>();
+  forwardingCountByCycle = new Map<string, number>();
   flushCount = 0;
 
   highlightedInstruction: number | null = null;
@@ -958,9 +960,9 @@ ADD x6, x5, x1`;
     this.displayStages = getPipelineStages(this.config.model);
     this.highlightedCycle = this.totalCycles > 0 ? this.totalCycles : 0;
 
-    this.buildGanttGrid();
     this.computeForwardingCycles();
     this.computeFlushCount();
+    this.buildGanttGrid();
 
     this.svgWidth = this.totalCycles * this.CELL_WIDTH;
     this.svgHeight = this.instructions.length * this.CELL_HEIGHT;
@@ -986,7 +988,6 @@ ADD x6, x5, x1`;
     const stages = getPipelineStages(this.config.model);
     let foundStage: PipelineStage | null = null;
     let foundCell: PipelineTimelineCell | null = null;
-    let isBubble = true;
 
     for (const stage of stages) {
       const key = `${instrIndex}_${cycle}_${stage}`;
@@ -995,47 +996,31 @@ ADD x6, x5, x1`;
       const cellP0 = this.timeline.cells.get(keyP0);
       const actualCell = cell || cellP0;
 
-      if (actualCell && !actualCell.isBubble) {
+      if (actualCell && actualCell.instructionId !== 'bubble' && !actualCell.isBubble) {
         foundStage = stage;
         foundCell = actualCell;
-        isBubble = false;
         break;
       }
     }
 
-    if (!foundCell && !isBubble) {
+    if (!foundCell) {
       return null;
     }
 
-    let hasAnyCell = false;
-    for (const stage of stages) {
-      const key = `${instrIndex}_${cycle}_${stage}`;
-      if (this.timeline.cells.has(key)) {
-        hasAnyCell = true;
-        foundCell = foundCell || this.timeline.cells.get(key)!;
-        break;
-      }
-      const keyP0 = `${instrIndex}_${cycle}_${stage}_p0`;
-      if (this.timeline.cells.has(keyP0)) {
-        hasAnyCell = true;
-        foundCell = foundCell || this.timeline.cells.get(keyP0)!;
-        break;
-      }
-    }
-
-    if (!hasAnyCell) return null;
+    const isStall = foundCell.stalled === true;
 
     return {
-      stage: foundStage,
-      isBubble: isBubble,
-      isFlushed: foundCell?.flushed || false,
+      stage: isStall ? null : foundStage,
+      isBubble: isStall,
+      isFlushed: foundCell.flushed || false,
       hasForwarding: this.forwardingCycles.has(`${instrIndex}_${cycle}`),
-      hazardType: foundCell?.hazardHighlight || null
+      hazardType: foundCell.hazardHighlight || null
     };
   }
 
   private computeForwardingCycles(): void {
     this.forwardingCycles.clear();
+    this.forwardingCountByCycle.clear();
     if (!this.timeline) return;
 
     const instrIndexMap = new Map<string, number>();
@@ -1053,7 +1038,10 @@ ADD x6, x5, x1`;
       for (let c = 1; c <= this.totalCycles; c++) {
         const key = `${toIdx}_${c}_${exStageName}`;
         if (this.timeline.cells.has(key)) {
-          this.forwardingCycles.add(`${toIdx}_${c}`);
+          const cycleKey = `${toIdx}_${c}`;
+          this.forwardingCycles.add(cycleKey);
+          const currentCount = this.forwardingCountByCycle.get(cycleKey) || 0;
+          this.forwardingCountByCycle.set(cycleKey, currentCount + 1);
           break;
         }
       }
@@ -1087,10 +1075,20 @@ ADD x6, x5, x1`;
     return colors[stage] || '#cccccc';
   }
 
-  getForwardingArrowPath(cycle: number, row: number): string {
-    const x = this.cellX(cycle) + this.CELL_WIDTH - this.CELL_PADDING - 14;
-    const y = this.cellY(row) + 8;
-    return `M ${x} ${y} l 10 0 l 0 -6 l 6 6 l -6 6 l 0 -6 z`;
+  getForwardingCount(instrIndex: number, cycle: number): number {
+    return this.forwardingCountByCycle.get(`${instrIndex}_${cycle}`) || 0;
+  }
+
+  getForwardingArrowArray(count: number): number[] {
+    return Array.from({ length: count }, (_, i) => i);
+  }
+
+  getForwardingArrowPath(cycle: number, row: number, arrowIndex: number = 0): string {
+    const baseX = this.cellX(cycle) + this.CELL_WIDTH - this.CELL_PADDING - 14;
+    const baseY = this.cellY(row) + 6;
+    const x = baseX - arrowIndex * 12;
+    const y = baseY;
+    return `M ${x} ${y} l 10 0 l 0 -5 l 5 5 l -5 5 l 0 -5 z`;
   }
 
   getCellFill(cell: GanttCell): string {

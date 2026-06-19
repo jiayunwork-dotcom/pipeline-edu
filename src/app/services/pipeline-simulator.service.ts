@@ -147,7 +147,7 @@ export class PipelineSimulatorService {
     const wbStageName = 'WB';
 
     const stallNeeded = this.checkStallNeeded();
-    const useStall = stallNeeded && this.config.enableStallInsertion && !this.config.enableForwarding;
+    const useStall = stallNeeded && this.config.enableStallInsertion;
 
     this.wbStage(cycle, wbStageName);
     this.memStage(cycle, memStageName);
@@ -184,7 +184,7 @@ export class PipelineSimulatorService {
   }
 
   private checkStallNeeded(): boolean {
-    if (!this.config.enableStallInsertion || this.config.enableForwarding) return false;
+    if (!this.config.enableStallInsertion) return false;
 
     const idReg = this.state.pipelineRegisters.get('ID');
     if (!idReg?.instruction) return false;
@@ -196,13 +196,23 @@ export class PipelineSimulatorService {
       ? ['EX1', 'EX2', 'MEM']
       : ['EX', 'MEM'];
 
+    const exStageName = this.config.model === '7-stage' ? 'EX1' : 'EX';
+
     for (const stageName of stagesToCheck) {
       const preg = this.state.pipelineRegisters.get(stageName);
       const instr = preg?.instruction;
       if (instr && instr.needsWriteback && instr.rd !== undefined && instr.rd !== 0) {
-        if ((idInstr.rs1 !== undefined && idInstr.rs1 === instr.rd) ||
-            (idInstr.rs2 !== undefined && idInstr.rs2 === instr.rd)) {
-          return true;
+        const hasDependency = (idInstr.rs1 !== undefined && idInstr.rs1 === instr.rd) ||
+                              (idInstr.rs2 !== undefined && idInstr.rs2 === instr.rd);
+
+        if (hasDependency) {
+          if (!this.config.enableForwarding) {
+            return true;
+          }
+
+          if (stageName === exStageName && instr.isLoad) {
+            return true;
+          }
         }
       }
     }
@@ -876,7 +886,8 @@ export class PipelineSimulatorService {
         instructionId: 'bubble',
         stage: 'BUBBLE',
         cycle,
-        isBubble: true
+        isBubble: true,
+        stalled: true
       });
       return;
     }
@@ -896,6 +907,7 @@ export class PipelineSimulatorService {
       stage,
       cycle,
       isBubble,
+      stalled,
       hazardHighlight,
       flushed: this.state.flushedInstructions.includes(instr.id)
     });

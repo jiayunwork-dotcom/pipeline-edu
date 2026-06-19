@@ -109,6 +109,7 @@ export interface PipelineTimelineCell {
   stage: PipelineStage | 'BUBBLE';
   cycle: number;
   isBubble: boolean;
+  stalled?: boolean;
   hazardHighlight?: HazardType;
   forwardArrow?: ForwardingPath;
   flushed?: boolean;
