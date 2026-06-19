@@ -21,6 +21,9 @@ import { CommonModule } from '@angular/common';
             <a routerLink="/levels" routerLinkActive="active">
               教学关卡
             </a>
+            <a routerLink="/experiment" routerLinkActive="active">
+              实验报告
+            </a>
           </nav>
         </div>
       </header>

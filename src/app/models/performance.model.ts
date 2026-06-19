@@ -1,4 +1,5 @@
 import { HazardType } from './register.model';
+import { BranchPredictionStrategy } from './branch-prediction.model';
 
 export interface PerformanceStats {
   totalCycles: number;
@@ -24,6 +25,37 @@ export interface BranchPredictionPerfStats {
 export interface ComparisonResult {
   configName: string;
   stats: PerformanceStats;
+}
+
+export type ExperimentPipelineModel = '5-stage' | '7-stage';
+
+export interface ExperimentConfig {
+  id: string;
+  name: string;
+  model: ExperimentPipelineModel;
+  enableForwarding: boolean;
+  enableStallInsertion: boolean;
+  branchPrediction: BranchPredictionStrategy | null;
+}
+
+export interface ExperimentResult {
+  config: ExperimentConfig;
+  stats: PerformanceStats;
+  totalHazards: number;
+}
+
+export interface ExperimentAnalysis {
+  bestConfig: ExperimentResult;
+  forwardingImpact: {
+    withForwardingCpi: number;
+    withoutForwardingCpi: number;
+    improvementPercent: number;
+  } | null;
+  predictionComparison: {
+    strategy: string;
+    accuracy: number;
+  }[];
+  recommendation: string;
 }
 
 export interface LevelConfig {
