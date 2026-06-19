@@ -27,6 +27,9 @@ interface ArrowLine {
   imports: [CommonModule],
   template: `
     <div class="timeline-container" *ngIf="timeline" #containerRef>
+      <div class="timeline-header" *ngIf="title">
+        <div class="timeline-title">{{title}}</div>
+      </div>
       <div class="timeline-header">
         <div class="instruction-label-header">指令</div>
         <div class="cycles-container">
@@ -70,14 +73,17 @@ interface ArrowLine {
                 <div
                   *ngIf="getCell(i, c, stage) as cell"
                   class="timeline-cell"
-                  [class]="getCellClass(cell, stage)"
+                  [class]="getCellClass(cell, stage, i, c)"
                   [title]="getCellTitle(cell, stage)"
+                  [class.diff-highlight]="isDiffHighlighted(i, c)"
+                  [class.hover-blink]="isHoverBlinkCell(i, c)"
                 >
                   <span *ngIf="!cell.isBubble">{{stage}}</span>
                   <span *ngIf="cell.isBubble && stage === stages[0]">
                     <span class="bubble-text">BUBBLE</span>
                   </span>
                 </div>
+                <div *ngIf="!getCell(i, c, stage)" class="timeline-cell empty-cell"></div>
               </div>
             </ng-container>
           </div>
@@ -110,7 +116,7 @@ interface ArrowLine {
         </g>
       </svg>
 
-      <div class="legend">
+      <div class="legend" *ngIf="showLegend">
         <ng-container *ngFor="let item of legendItems">
           <div class="legend-item">
             <span class="legend-color" [ngClass]="item.colorClass"></span>
@@ -151,6 +157,14 @@ interface ArrowLine {
       overflow-x: auto;
       box-shadow: 0 2px 8px rgba(0,0,0,0.08);
       position: relative;
+    }
+    .timeline-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #2c3e50;
+      padding: 4px 0 12px 0;
+      border-bottom: 2px solid #e9ecef;
+      margin-bottom: 8px;
     }
     .timeline-header, .timeline-row {
       display: flex;
@@ -260,12 +274,16 @@ interface ArrowLine {
       font-size: 11px;
       font-weight: 600;
       color: white;
-      transition: transform 0.15s;
+      transition: transform 0.15s, box-shadow 0.15s;
     }
     .timeline-cell:hover {
       transform: scale(1.05);
       z-index: 5;
       position: relative;
+    }
+    .timeline-cell.empty-cell {
+      background: transparent;
+      border: 1px dashed #dee2e6;
     }
     .timeline-cell.if { background: #3498db; }
     .timeline-cell.id { background: #2ecc71; }
@@ -293,6 +311,24 @@ interface ArrowLine {
     .timeline-cell.hazard {
       box-shadow: 0 0 0 3px #e74c3c, inset 0 0 0 1px #c0392b;
       animation: hazardPulse 1.5s infinite;
+    }
+    .timeline-cell.diff-highlight {
+      box-shadow: 0 0 0 3px #9b59b6, inset 0 0 0 1px #8e44ad;
+    }
+    .timeline-cell.hover-blink {
+      animation: diffBlink 0.6s ease-in-out infinite;
+      z-index: 10;
+      position: relative;
+    }
+    @keyframes diffBlink {
+      0%, 100% {
+        box-shadow: 0 0 0 4px #e74c3c, 0 0 12px rgba(231,76,60,0.6);
+        transform: scale(1.08);
+      }
+      50% {
+        box-shadow: 0 0 0 2px #f39c12, 0 0 6px rgba(243,156,18,0.4);
+        transform: scale(1.02);
+      }
     }
     @keyframes hazardPulse {
       0%, 100% { box-shadow: 0 0 0 3px #e74c3c; }
@@ -373,6 +409,11 @@ export class PipelineTimelineComponent implements OnInit, OnChanges, AfterViewCh
   @Input() pipelineModel: PipelineModel = '5-stage';
   @Input() currentCycle: number = 0;
   @Input() forwardingPaths: ForwardingPath[] = [];
+  @Input() extendedCycles: number = 0;
+  @Input() diffCells: Set<string> = new Set();
+  @Input() hoverHighlightCells: Set<string> = new Set();
+  @Input() title: string = '';
+  @Input() showLegend: boolean = true;
 
   @ViewChild('containerRef', { static: false }) containerRef!: ElementRef;
   @ViewChild('bodyRef', { static: false }) bodyRef!: ElementRef;
@@ -393,10 +434,10 @@ export class PipelineTimelineComponent implements OnInit, OnChanges, AfterViewCh
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['timeline'] || changes['pipelineModel']) {
+    if (changes['timeline'] || changes['pipelineModel'] || changes['extendedCycles']) {
       this.updateData();
     }
-    if (changes['timeline'] || changes['forwardingPaths']) {
+    if (changes['timeline'] || changes['forwardingPaths'] || changes['extendedCycles']) {
       this.scheduleArrowCalculation();
     }
   }
@@ -406,7 +447,7 @@ export class PipelineTimelineComponent implements OnInit, OnChanges, AfterViewCh
   }
 
   private scheduleArrowCalculation(): void {
-    const key = `${this.timeline?.cycles || 0}_${this.forwardingPaths.length}_${this.stages.length}`;
+    const key = `${this.timeline?.cycles || 0}_${this.forwardingPaths.length}_${this.stages.length}_${this.extendedCycles}`;
     if (key === this.lastSvgUpdateKey) return;
     this.lastSvgUpdateKey = key;
     setTimeout(() => this.calculateArrows(), 0);
@@ -415,7 +456,8 @@ export class PipelineTimelineComponent implements OnInit, OnChanges, AfterViewCh
   private updateData(): void {
     this.stages = getPipelineStages(this.pipelineModel);
     if (this.timeline) {
-      this.cycleNumbers = Array.from({ length: this.timeline.cycles }, (_, i) => i + 1);
+      const totalCycles = Math.max(this.timeline.cycles, this.extendedCycles);
+      this.cycleNumbers = Array.from({ length: totalCycles }, (_, i) => i + 1);
     }
     this.updateLegend();
   }
@@ -544,7 +586,7 @@ export class PipelineTimelineComponent implements OnInit, OnChanges, AfterViewCh
     return null;
   }
 
-  getCellClass(cell: PipelineTimelineCell, stage: PipelineStage): string[] {
+  getCellClass(cell: PipelineTimelineCell, stage: PipelineStage, instrIndex: number, cycle: number): string[] {
     const classes: string[] = [];
     if (cell.isBubble) {
       classes.push('bubble');
@@ -558,6 +600,14 @@ export class PipelineTimelineComponent implements OnInit, OnChanges, AfterViewCh
       classes.push('flushed');
     }
     return classes;
+  }
+
+  isDiffHighlighted(instrIndex: number, cycle: number): boolean {
+    return this.diffCells.has(`${instrIndex}_${cycle}`);
+  }
+
+  isHoverBlinkCell(instrIndex: number, cycle: number): boolean {
+    return this.hoverHighlightCells.has(`${instrIndex}_${cycle}`);
   }
 
   getCellTitle(cell: PipelineTimelineCell, stage: PipelineStage): string {
