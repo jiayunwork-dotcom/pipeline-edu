@@ -207,7 +207,7 @@ BEQ x1, x2, loop"
                   <div class="snapshot-instructions">
                     <div class="snapshot-label">
                       <span>指令序列</span>
-                      <span class="instruction-count">{{getInstructionLines().length}} 条指令</span>
+                      <span class="instruction-count">{{getTotalInstructionCount()}} 条指令</span>
                       <button (click)="instructionsExpanded = !instructionsExpanded" class="btn-tiny">
                         {{instructionsExpanded ? '收起' : '展开'}}
                       </button>
@@ -1310,14 +1310,9 @@ SW x9, 4(x0)`;
   }
 
   copyGroupConfig(group: ExperimentConfig): void {
-    const configObj: any = {
-      model: group.model,
-      forwarding: group.enableForwarding,
-      stallInsertion: group.enableStallInsertion,
-      branchPrediction: group.branchPrediction || 'none'
-    };
-    const jsonStr = JSON.stringify(configObj);
-    navigator.clipboard.writeText(jsonStr).then(() => {
+    const predValue = group.branchPrediction ? `"${group.branchPrediction}"` : 'null';
+    const jsLiteral = `{model:"${group.model}",forwarding:${group.enableForwarding},stallInsertion:${group.enableStallInsertion},branchPrediction:${predValue}}`;
+    navigator.clipboard.writeText(jsLiteral).then(() => {
     }).catch(err => {
       console.error('复制失败:', err);
     });
@@ -1593,6 +1588,10 @@ SW x9, 4(x0)`;
       return lines;
     }
     return lines.slice(0, 3);
+  }
+
+  getTotalInstructionCount(): number {
+    return this.assemblyCode.split('\n').filter(line => line.trim() !== '').length;
   }
 
   showTooltip(event: MouseEvent, result: ExperimentResult): void {
