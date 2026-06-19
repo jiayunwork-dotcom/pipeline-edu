@@ -1,34 +1,58 @@
-import { Component, Input, OnInit, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, Input, OnInit, OnChanges, SimpleChanges, ElementRef, ViewChild, AfterViewChecked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import {
   PipelineTimeline, PipelineStage, PipelineTimelineCell,
-  getPipelineStages, PipelineModel, ForwardingPath, HazardType
+  getPipelineStages, PipelineModel, ForwardingPath, HazardType,
+  PIPELINE_STAGES_5, PIPELINE_STAGES_7
 } from '../../models/register.model';
 import { Instruction } from '../../models/instruction.model';
 import { InstructionParserService } from '../../services/instruction-parser.service';
+
+interface LegendItem {
+  colorClass: string;
+  label: string;
+}
+
+interface ArrowLine {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  path: ForwardingPath;
+}
 
 @Component({
   selector: 'app-pipeline-timeline',
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="timeline-container" *ngIf="timeline">
+    <div class="timeline-container" *ngIf="timeline" #containerRef>
       <div class="timeline-header">
         <div class="instruction-label-header">指令</div>
         <div class="cycles-container">
           <div
             *ngFor="let c of cycleNumbers"
-            class="cycle-header"
+            class="cycle-header-group"
             [class.current-cycle]="c === currentCycle"
           >
-            {{c}}
+            <div class="cycle-number">{{c}}</div>
+            <div class="cycle-stages-header">
+              <div
+                *ngFor="let stage of stages"
+                class="stage-header-cell"
+                [class]="stage.toLowerCase()"
+              >
+                {{stage}}
+              </div>
+            </div>
           </div>
         </div>
       </div>
-      <div class="timeline-body">
+      <div class="timeline-body" #bodyRef>
         <div
           *ngFor="let instr of timeline.instructions; let i = index"
           class="timeline-row"
+          [attr.data-row-index]="i"
         >
           <div class="instruction-label" [title]="instr.rawText">
             <span class="instr-index">{{i + 1}}.</span>
@@ -37,8 +61,11 @@ import { InstructionParserService } from '../../services/instruction-parser.serv
           <div class="cycles-container">
             <ng-container *ngFor="let c of cycleNumbers">
               <div
-                *ngFor="let stage of stages"
+                *ngFor="let stage of stages; let sIdx = index"
                 class="timeline-cell-wrapper"
+                [attr.data-cycle]="c"
+                [attr.data-stage]="stage"
+                [attr.data-cell-key]="i + '_' + c + '_' + stage"
               >
                 <div
                   *ngIf="getCell(i, c, stage) as cell"
@@ -57,35 +84,39 @@ import { InstructionParserService } from '../../services/instruction-parser.serv
         </div>
       </div>
 
-      <svg *ngIf="forwardingPaths.length > 0" class="forwarding-arrows">
+      <svg class="forwarding-arrows" [attr.width]="svgWidth" [attr.height]="svgHeight">
         <defs>
           <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
             <polygon points="0 0, 10 3.5, 0 7" fill="#27ae60" />
           </marker>
+          <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#2980b9" />
+          </marker>
+          <marker id="arrowhead-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#e67e22" />
+          </marker>
         </defs>
+        <g *ngFor="let arrow of arrowLines; let idx = index">
+          <path
+            [attr.d]="getArrowPath(arrow)"
+            fill="none"
+            [attr.stroke]="getArrowColor(arrow.path.fromStage)"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            marker-end="url(#arrowhead)"
+            [attr.data-forward-idx]="idx"
+          />
+          <title>转发: x{{arrow.path.register}} 从 {{arrow.path.fromStage}} → {{arrow.path.toStage}}</title>
+        </g>
       </svg>
 
       <div class="legend">
-        <div class="legend-item">
-          <span class="legend-color if"></span>
-          <span>取指 IF</span>
-        </div>
-        <div class="legend-item">
-          <span class="legend-color id"></span>
-          <span>译码 ID</span>
-        </div>
-        <div class="legend-item">
-          <span class="legend-color ex"></span>
-          <span>执行 EX</span>
-        </div>
-        <div class="legend-item">
-          <span class="legend-color mem"></span>
-          <span>访存 MEM</span>
-        </div>
-        <div class="legend-item">
-          <span class="legend-color wb"></span>
-          <span>写回 WB</span>
-        </div>
+        <ng-container *ngFor="let item of legendItems">
+          <div class="legend-item">
+            <span class="legend-color" [ngClass]="item.colorClass"></span>
+            <span>{{item.label}}</span>
+          </div>
+        </ng-container>
         <div class="legend-item">
           <span class="legend-color bubble"></span>
           <span>气泡</span>
@@ -98,6 +129,17 @@ import { InstructionParserService } from '../../services/instruction-parser.serv
           <span class="legend-color flushed"></span>
           <span>冲刷</span>
         </div>
+        <div class="legend-item" *ngIf="forwardingPaths.length > 0">
+          <svg width="40" height="12">
+            <line x1="2" y1="6" x2="30" y2="6" stroke="#27ae60" stroke-width="2.5" marker-end="url(#legend-arrow)"/>
+            <defs>
+              <marker id="legend-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#27ae60" />
+              </marker>
+            </defs>
+          </svg>
+          <span>数据转发路径</span>
+        </div>
       </div>
     </div>
   `,
@@ -108,6 +150,7 @@ import { InstructionParserService } from '../../services/instruction-parser.serv
       padding: 16px;
       overflow-x: auto;
       box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      position: relative;
     }
     .timeline-header, .timeline-row {
       display: flex;
@@ -152,20 +195,53 @@ import { InstructionParserService } from '../../services/instruction-parser.serv
       display: flex;
       flex-wrap: nowrap;
     }
-    .cycle-header {
-      width: 60px;
-      min-width: 60px;
-      padding: 6px;
-      text-align: center;
-      font-size: 11px;
-      font-weight: 600;
-      color: #6c757d;
+    .cycle-header-group {
+      display: flex;
+      flex-direction: column;
       border-right: 1px solid #e9ecef;
     }
-    .cycle-header.current-cycle {
+    .cycle-header-group.current-cycle {
       background: #e3f2fd;
-      color: #1976d2;
     }
+    .cycle-header-group.current-cycle .cycle-number {
+      color: #1976d2;
+      background: #bbdefb;
+    }
+    .cycle-number {
+      padding: 4px 6px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #6c757d;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e9ecef;
+    }
+    .cycle-stages-header {
+      display: flex;
+    }
+    .stage-header-cell {
+      width: 56px;
+      min-width: 56px;
+      margin: 0 2px;
+      padding: 2px 0;
+      text-align: center;
+      font-size: 9px;
+      font-weight: 700;
+      color: white;
+      border-radius: 3px 3px 0 0;
+      opacity: 0.85;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .stage-header-cell.if { background: #3498db; }
+    .stage-header-cell.id { background: #2ecc71; }
+    .stage-header-cell.ex { background: #f39c12; }
+    .stage-header-cell.mem { background: #9b59b6; }
+    .stage-header-cell.wb { background: #1abc9c; }
+    .stage-header-cell.if1 { background: #2980b9; }
+    .stage-header-cell.if2 { background: #3498db; opacity: 0.85; }
+    .stage-header-cell.ex1 { background: #e67e22; }
+    .stage-header-cell.ex2 { background: #f39c12; }
     .timeline-row {
       margin-bottom: 2px;
     }
@@ -233,13 +309,15 @@ import { InstructionParserService } from '../../services/instruction-parser.serv
       color: #e74c3c;
       text-decoration: line-through;
     }
+    .timeline-body {
+      position: relative;
+    }
     .forwarding-arrows {
       position: absolute;
       top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      left: 220px;
       pointer-events: none;
+      z-index: 20;
     }
     .legend {
       display: flex;
@@ -290,14 +368,23 @@ import { InstructionParserService } from '../../services/instruction-parser.serv
     }
   `]
 })
-export class PipelineTimelineComponent implements OnInit, OnChanges {
+export class PipelineTimelineComponent implements OnInit, OnChanges, AfterViewChecked {
   @Input() timeline!: PipelineTimeline;
   @Input() pipelineModel: PipelineModel = '5-stage';
   @Input() currentCycle: number = 0;
   @Input() forwardingPaths: ForwardingPath[] = [];
 
+  @ViewChild('containerRef', { static: false }) containerRef!: ElementRef;
+  @ViewChild('bodyRef', { static: false }) bodyRef!: ElementRef;
+
   stages: PipelineStage[] = [];
   cycleNumbers: number[] = [];
+  legendItems: LegendItem[] = [];
+  arrowLines: ArrowLine[] = [];
+  svgWidth = 0;
+  svgHeight = 0;
+
+  private lastSvgUpdateKey = '';
 
   constructor(public parser: InstructionParserService) {}
 
@@ -309,12 +396,138 @@ export class PipelineTimelineComponent implements OnInit, OnChanges {
     if (changes['timeline'] || changes['pipelineModel']) {
       this.updateData();
     }
+    if (changes['timeline'] || changes['forwardingPaths']) {
+      this.scheduleArrowCalculation();
+    }
+  }
+
+  ngAfterViewChecked(): void {
+    this.scheduleArrowCalculation();
+  }
+
+  private scheduleArrowCalculation(): void {
+    const key = `${this.timeline?.cycles || 0}_${this.forwardingPaths.length}_${this.stages.length}`;
+    if (key === this.lastSvgUpdateKey) return;
+    this.lastSvgUpdateKey = key;
+    setTimeout(() => this.calculateArrows(), 0);
   }
 
   private updateData(): void {
     this.stages = getPipelineStages(this.pipelineModel);
     if (this.timeline) {
       this.cycleNumbers = Array.from({ length: this.timeline.cycles }, (_, i) => i + 1);
+    }
+    this.updateLegend();
+  }
+
+  private updateLegend(): void {
+    const map5: Record<string, string> = {
+      'IF': '取指 IF',
+      'ID': '译码 ID',
+      'EX': '执行 EX',
+      'MEM': '访存 MEM',
+      'WB': '写回 WB'
+    };
+    const map7: Record<string, string> = {
+      'IF1': '取指1 IF1',
+      'IF2': '取指2 IF2',
+      'ID': '译码 ID',
+      'EX1': '执行1 EX1',
+      'EX2': '执行2 EX2',
+      'MEM': '访存 MEM',
+      'WB': '写回 WB'
+    };
+    const map = this.pipelineModel === '7-stage' ? map7 : map5;
+    this.legendItems = this.stages.map(s => ({
+      colorClass: s.toLowerCase(),
+      label: map[s] || s
+    }));
+  }
+
+  private calculateArrows(): void {
+    if (!this.bodyRef || !this.containerRef || this.forwardingPaths.length === 0) {
+      this.arrowLines = [];
+      return;
+    }
+
+    const bodyEl: HTMLElement = this.bodyRef.nativeElement;
+    const bodyRect = bodyEl.getBoundingClientRect();
+    const lines: ArrowLine[] = [];
+    const processed = new Set<string>();
+
+    for (const path of this.forwardingPaths) {
+      const key = `${path.fromInstructionId}_${path.fromStage}_${path.toInstructionId}_${path.toStage}_${path.register}`;
+      if (processed.has(key)) continue;
+      processed.add(key);
+
+      const fromKey = this.findLastStageCell(path.fromInstructionId, path.fromStage);
+      const toKey = this.findFirstStageCell(path.toInstructionId, path.toStage);
+      if (!fromKey || !toKey) continue;
+
+      const fromEl = bodyEl.querySelector<HTMLElement>(`[data-cell-key="${fromKey}"]`);
+      const toEl = bodyEl.querySelector<HTMLElement>(`[data-cell-key="${toKey}"]`);
+      if (!fromEl || !toEl) continue;
+
+      const fromRect = fromEl.getBoundingClientRect();
+      const toRect = toEl.getBoundingClientRect();
+
+      lines.push({
+        x1: fromRect.right - bodyRect.left,
+        y1: fromRect.top + fromRect.height / 2 - bodyRect.top,
+        x2: toRect.left - bodyRect.left,
+        y2: toRect.top + toRect.height / 2 - bodyRect.top,
+        path
+      });
+    }
+
+    this.arrowLines = lines;
+    this.svgWidth = bodyRect.width;
+    this.svgHeight = bodyRect.height;
+  }
+
+  private findLastStageCell(instrId: string, stage: string): string | null {
+    const instrIndex = this.timeline.instructions.findIndex(i => i.id === instrId);
+    if (instrIndex < 0) return null;
+    for (let c = this.cycleNumbers.length; c >= 1; c--) {
+      const key = `${instrIndex}_${c}_${stage}`;
+      if (this.timeline.cells.has(key)) {
+        const cell = this.timeline.cells.get(key)!;
+        if (!cell.isBubble) return key;
+      }
+    }
+    return null;
+  }
+
+  private findFirstStageCell(instrId: string, stage: string): string | null {
+    const instrIndex = this.timeline.instructions.findIndex(i => i.id === instrId);
+    if (instrIndex < 0) return null;
+    for (let c = 1; c <= this.cycleNumbers.length; c++) {
+      const key = `${instrIndex}_${c}_${stage}`;
+      if (this.timeline.cells.has(key)) {
+        const cell = this.timeline.cells.get(key)!;
+        if (!cell.isBubble) return key;
+      }
+    }
+    return null;
+  }
+
+  getArrowPath(arrow: ArrowLine): string {
+    const dx = arrow.x2 - arrow.x1;
+    const dy = arrow.y2 - arrow.y1;
+    const midX = (arrow.x1 + arrow.x2) / 2;
+    if (Math.abs(dy) < 5) {
+      return `M ${arrow.x1} ${arrow.y1} L ${arrow.x2} ${arrow.y2}`;
+    }
+    const ctrlOffset = Math.min(Math.abs(dx) * 0.4, 50);
+    return `M ${arrow.x1} ${arrow.y1} C ${arrow.x1 + ctrlOffset} ${arrow.y1}, ${arrow.x2 - ctrlOffset} ${arrow.y2}, ${arrow.x2} ${arrow.y2}`;
+  }
+
+  getArrowColor(fromStage: string): string {
+    switch (fromStage) {
+      case 'EX': case 'EX1': case 'EX2': return '#27ae60';
+      case 'MEM': return '#2980b9';
+      case 'WB': return '#e67e22';
+      default: return '#27ae60';
     }
   }
 

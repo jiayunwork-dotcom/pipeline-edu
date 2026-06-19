@@ -96,7 +96,23 @@ export class PipelineSimulatorService {
   }
 
   getState(): SimulatorState {
-    return this.state;
+    return {
+      ...this.state,
+      registerFile: {
+        registers: [...this.state.registerFile.registers],
+        registerBusy: [...this.state.registerFile.registerBusy]
+      },
+      pipelineRegisters: new Map(this.state.pipelineRegisters),
+      memory: new Map(this.state.memory),
+      hazards: [...this.state.hazards],
+      forwardingPaths: [...this.state.forwardingPaths],
+      timelineCells: new Map(this.state.timelineCells),
+      instructionStartCycle: new Map(this.state.instructionStartCycle),
+      instructionStages: new Map(this.state.instructionStages),
+      completedInstructions: [...this.state.completedInstructions],
+      flushedInstructions: [...this.state.flushedInstructions],
+      branchStats: { ...this.state.branchStats }
+    };
   }
 
   getConfig(): SimulatorConfig {
@@ -156,6 +172,9 @@ export class PipelineSimulatorService {
       this.stallIdAndIf(cycle);
     } else {
       this.idStage(cycle, idStageName);
+      if (this.config.model === '7-stage') {
+        this.ifStage(cycle, 'IF2');
+      }
       this.ifStage(cycle, ifStageName);
     }
 
