@@ -16,6 +16,7 @@ import { PipelineTimelineComponent } from '../pipeline-timeline/pipeline-timelin
 import { RegisterFileComponent } from '../register-file/register-file.component';
 import { PerformanceStatsComponent } from '../performance-stats/performance-stats.component';
 import { TomasuloPanelComponent } from '../tomasulo-panel/tomasulo-panel.component';
+import { InstructionReorderComponent } from '../instruction-reorder/instruction-reorder.component';
 import { TomasuloState } from '../../models/tomasulo.model';
 
 @Component({
@@ -24,7 +25,8 @@ import { TomasuloState } from '../../models/tomasulo.model';
   imports: [
     CommonModule, FormsModule,
     PipelineTimelineComponent, RegisterFileComponent,
-    PerformanceStatsComponent, TomasuloPanelComponent
+    PerformanceStatsComponent, TomasuloPanelComponent,
+    InstructionReorderComponent
   ],
   template: `
     <div class="simulator-container">
@@ -85,6 +87,12 @@ LW x4, 0(x0)"
             </button>
           </div>
         </div>
+
+        <app-instruction-reorder
+          [instructions]="instructions"
+          [enableForwarding]="config.enableForwarding"
+          (applyInstructions)="onApplyReorderedInstructions($event)"
+        ></app-instruction-reorder>
 
         <div class="card">
           <div class="card-title">模拟器配置</div>
@@ -571,6 +579,58 @@ ADD x4, x1, x5`;
     const result = this.parser.parse(this.assemblyCode);
     this.instructions = result.instructions;
     this.parseErrors = result.errors;
+  }
+
+  onApplyReorderedInstructions(orderedInstructions: Instruction[]): void {
+    const lines = this.assemblyCode.split('\n');
+    const nonEmptyLines: string[] = [];
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      const commentIndex = trimmed.indexOf('#');
+      if (commentIndex !== -1) {
+        const beforeComment = trimmed.substring(0, commentIndex).trim();
+        if (beforeComment.length === 0 && !trimmed.match(/^[a-zA-Z_][a-zA-Z0-9_]*\s*:/)) continue;
+      }
+      const labelMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (labelMatch && labelMatch[2].trim().length === 0) continue;
+      nonEmptyLines.push(line);
+    }
+
+    const idToLine = new Map<string, number>();
+    let instrIdx = 0;
+    for (let i = 0; i < lines.length && instrIdx < this.instructions.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed.length === 0) continue;
+      const commentIndex = trimmed.indexOf('#');
+      let codePart = trimmed;
+      if (commentIndex !== -1) {
+        codePart = trimmed.substring(0, commentIndex).trim();
+      }
+      const labelMatch = codePart.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.*)$/);
+      if (labelMatch) {
+        codePart = labelMatch[2].trim();
+      }
+      if (codePart.length === 0) continue;
+      idToLine.set(this.instructions[instrIdx].id, i);
+      instrIdx++;
+    }
+
+    const reorderedLines: string[] = [];
+    const usedIndices = new Set<number>();
+    
+    for (const instr of orderedInstructions) {
+      const lineIdx = idToLine.get(instr.id);
+      if (lineIdx !== undefined) {
+        reorderedLines.push(lines[lineIdx]);
+        usedIndices.add(lineIdx);
+      }
+    }
+
+    this.assemblyCode = reorderedLines.join('\n');
+    this.parseCode();
+    this.runSimulation();
   }
 
   onBranchPredictionChange(): void {
