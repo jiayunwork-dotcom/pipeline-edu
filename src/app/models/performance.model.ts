@@ -56,6 +56,25 @@ export interface ExperimentAnalysis {
     accuracy: number;
   }[];
   recommendation: string;
+  modelDimension?: {
+    hasVariation: boolean;
+    groups: {
+      model: string;
+      avgCpi: number;
+      count: number;
+    }[];
+    conclusion: string;
+  };
+  predictionDimension?: {
+    hasVariation: boolean;
+    groups: {
+      strategy: string;
+      strategyKey: string | null;
+      avgCpi: number;
+      count: number;
+    }[];
+    conclusion: string;
+  };
 }
 
 export interface LevelConfig {

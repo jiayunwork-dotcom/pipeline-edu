@@ -67,6 +67,12 @@ BEQ x1, x2, loop"
                     <span class="group-badge">{{i + 1}}</span>
                     <input type="text" [(ngModel)]="group.name" (click)="$event.stopPropagation()" class="group-name-input" placeholder="组名">
                     <span class="group-summary">{{getGroupSummary(group)}}</span>
+                    <button
+                      (click)="$event.stopPropagation(); copyGroupConfig(group)"
+                      class="btn-copy"
+                      title="复制配置JSON">
+                      📋
+                    </button>
                   </div>
                   <div class="group-actions">
                     <button
@@ -195,65 +201,134 @@ BEQ x1, x2, loop"
             </div>
 
             <div *ngIf="experimentResults.length > 0">
+              <div class="snapshot-section">
+                <h4>📋 实验参数快照</h4>
+                <div class="snapshot-content">
+                  <div class="snapshot-instructions">
+                    <div class="snapshot-label">
+                      <span>指令序列</span>
+                      <span class="instruction-count">{{getInstructionLines().length}} 条指令</span>
+                      <button (click)="instructionsExpanded = !instructionsExpanded" class="btn-tiny">
+                        {{instructionsExpanded ? '收起' : '展开'}}
+                      </button>
+                    </div>
+                    <div class="instruction-code" [class.expanded]="instructionsExpanded">
+                      <div *ngFor="let line of getInstructionLines(); let i = index" class="instruction-line">
+                        <span class="line-num">{{i + 1}}</span>
+                        <span class="line-text">{{line}}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="snapshot-configs">
+                    <div class="snapshot-label">各组配置</div>
+                    <div class="config-cards">
+                      <div *ngFor="let result of experimentResults; let i = index" class="config-card">
+                        <div class="config-card-badge">{{i + 1}}</div>
+                        <div class="config-card-name">{{result.config.name}}</div>
+                        <div class="config-card-details">
+                          <span>{{result.config.model === '5-stage' ? '5级' : '7级'}}</span>
+                          <span>{{result.config.enableForwarding ? '转发' : '无转发'}}</span>
+                          <span>{{result.config.enableStallInsertion ? '气泡' : '无气泡'}}</span>
+                          <span>{{getPredictionName(result.config.branchPrediction)}}预测</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div class="chart-section">
                 <h4>CPI & 总周期数对比</h4>
-                <svg [attr.viewBox]="'0 0 ' + chartWidth + ' ' + chartHeight" class="bar-chart">
-                  <g *ngFor="let result of experimentResults; let i = index">
-                    <rect
-                      [attr.x]="getBarX(i, 'cpi')"
-                      [attr.y]="getBarY(i, 'cpi')"
-                      [attr.width]="barWidth"
-                      [attr.height]="getBarHeight(i, 'cpi')"
-                      [attr.fill]="getBarColor(i, 'cpi')"
-                      class="bar"
-                    />
-                    <rect
-                      [attr.x]="getBarX(i, 'cycles')"
-                      [attr.y]="getBarY(i, 'cycles')"
-                      [attr.width]="barWidth"
-                      [attr.height]="getBarHeight(i, 'cycles')"
-                      [attr.fill]="getBarColor(i, 'cycles')"
-                      class="bar"
-                    />
-                    <text
-                      [attr.x]="getBarX(i, 'cpi') + barWidth / 2"
-                      [attr.y]="chartHeight - 10"
-                      text-anchor="middle"
-                      class="x-label"
-                    >
-                      {{result.config.name}}
-                    </text>
-                    <text
-                      [attr.x]="getBarX(i, 'cpi') + barWidth / 2"
-                      [attr.y]="getBarY(i, 'cpi') - 5"
-                      text-anchor="middle"
-                      class="bar-value"
-                    >
-                      {{result.stats.cpi.toFixed(2)}}
-                    </text>
-                    <text
-                      [attr.x]="getBarX(i, 'cycles') + barWidth / 2"
-                      [attr.y]="getBarY(i, 'cycles') - 5"
-                      text-anchor="middle"
-                      class="bar-value"
-                    >
-                      {{result.stats.totalCycles}}
-                    </text>
-                  </g>
+                <div class="chart-container" #chartContainer>
+                  <svg [attr.viewBox]="'0 0 ' + chartWidth + ' ' + chartHeight" class="bar-chart">
+                    <g *ngFor="let result of experimentResults; let i = index">
+                      <rect
+                        [attr.x]="getBarX(i, 'cpi')"
+                        [attr.y]="getBarY(i, 'cpi')"
+                        [attr.width]="barWidth"
+                        [attr.height]="getBarHeight(i, 'cpi')"
+                        [attr.fill]="getBarColor(i, 'cpi')"
+                        class="bar"
+                        (mouseenter)="showTooltip($event, result)"
+                        (mousemove)="moveTooltip($event)"
+                        (mouseleave)="hideTooltip()"
+                      />
+                      <rect
+                        [attr.x]="getBarX(i, 'cycles')"
+                        [attr.y]="getBarY(i, 'cycles')"
+                        [attr.width]="barWidth"
+                        [attr.height]="getBarHeight(i, 'cycles')"
+                        [attr.fill]="getBarColor(i, 'cycles')"
+                        class="bar"
+                        (mouseenter)="showTooltip($event, result)"
+                        (mousemove)="moveTooltip($event)"
+                        (mouseleave)="hideTooltip()"
+                      />
+                      <text
+                        [attr.x]="getBarX(i, 'cpi') + barWidth / 2"
+                        [attr.y]="chartHeight - 10"
+                        text-anchor="middle"
+                        class="x-label"
+                      >
+                        {{result.config.name}}
+                      </text>
+                      <text
+                        [attr.x]="getBarX(i, 'cpi') + barWidth / 2"
+                        [attr.y]="getBarY(i, 'cpi') - 5"
+                        text-anchor="middle"
+                        class="bar-value"
+                      >
+                        {{result.stats.cpi.toFixed(2)}}
+                      </text>
+                      <text
+                        [attr.x]="getBarX(i, 'cycles') + barWidth / 2"
+                        [attr.y]="getBarY(i, 'cycles') - 5"
+                        text-anchor="middle"
+                        class="bar-value"
+                      >
+                        {{result.stats.totalCycles}}
+                      </text>
+                    </g>
 
-                  <line [attr.x1]="chartPadding" [attr.y1]="chartHeight - 30" [attr.x2]="chartWidth - chartPadding" [attr.y2]="chartHeight - 30" stroke="#ccc" stroke-width="2"/>
-                  <line [attr.x1]="chartPadding" [attr.y1]="20" [attr.x2]="chartPadding" [attr.y2]="chartHeight - 30" stroke="#ccc" stroke-width="2"/>
+                    <line [attr.x1]="chartPadding" [attr.y1]="chartHeight - 30" [attr.x2]="chartWidth - chartPadding" [attr.y2]="chartHeight - 30" stroke="#ccc" stroke-width="2"/>
+                    <line [attr.x1]="chartPadding" [attr.y1]="20" [attr.x2]="chartPadding" [attr.y2]="chartHeight - 30" stroke="#ccc" stroke-width="2"/>
 
-                  <text x="10" y="35" class="y-label">CPI</text>
-                  <text [attr.x]="chartWidth - 80" y="35" class="y-label">总周期</text>
+                    <text x="10" y="35" class="y-label">CPI</text>
+                    <text [attr.x]="chartWidth - 80" y="35" class="y-label">总周期</text>
 
-                  <g class="legend" [attr.transform]="'translate(' + (chartWidth / 2 - 60) + ', 5)'">
-                    <rect x="0" y="0" width="15" height="15" fill="#4CAF50"/>
-                    <text x="20" y="12" class="legend-text">CPI</text>
-                    <rect x="80" y="0" width="15" height="15" fill="#2196F3"/>
-                    <text x="100" y="12" class="legend-text">总周期</text>
-                  </g>
-                </svg>
+                    <g class="legend" [attr.transform]="'translate(' + (chartWidth / 2 - 60) + ', 5)'">
+                      <rect x="0" y="0" width="15" height="15" fill="#4CAF50"/>
+                      <text x="20" y="12" class="legend-text">CPI</text>
+                      <rect x="80" y="0" width="15" height="15" fill="#2196F3"/>
+                      <text x="100" y="12" class="legend-text">总周期</text>
+                    </g>
+                  </svg>
+
+                  <div *ngIf="tooltipVisible && tooltipResult" class="chart-tooltip" [style.left.px]="tooltipX" [style.top.px]="tooltipY">
+                    <div class="tooltip-title">{{tooltipResult.config.name}}</div>
+                    <div class="tooltip-row">
+                      <span class="tooltip-label">总周期：</span>
+                      <span class="tooltip-value">{{tooltipResult.stats.totalCycles}}</span>
+                    </div>
+                    <div class="tooltip-row">
+                      <span class="tooltip-label">CPI：</span>
+                      <span class="tooltip-value">{{tooltipResult.stats.cpi.toFixed(2)}}</span>
+                    </div>
+                    <div class="tooltip-row">
+                      <span class="tooltip-label">IPC：</span>
+                      <span class="tooltip-value">{{tooltipResult.stats.ipc.toFixed(2)}}</span>
+                    </div>
+                    <div class="tooltip-row">
+                      <span class="tooltip-label">Stall周期：</span>
+                      <span class="tooltip-value">{{tooltipResult.stats.totalStallCycles}}</span>
+                    </div>
+                    <div class="tooltip-row">
+                      <span class="tooltip-label">冒险数：</span>
+                      <span class="tooltip-value">{{tooltipResult.totalHazards}}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div class="table-section">
@@ -280,11 +355,11 @@ BEQ x1, x2, loop"
                       <td>{{result.config.enableForwarding ? '✓' : '✗'}}</td>
                       <td>{{result.config.enableStallInsertion ? '✓' : '✗'}}</td>
                       <td>{{getPredictionName(result.config.branchPrediction)}}</td>
-                      <td>{{result.stats.totalCycles}}</td>
-                      <td>{{result.stats.cpi.toFixed(2)}}</td>
-                      <td>{{result.stats.ipc.toFixed(2)}}</td>
-                      <td>{{result.stats.totalStallCycles}}</td>
-                      <td>{{result.totalHazards}}</td>
+                      <td [ngClass]="getCellHighlightClass(result, 'cycles')">{{result.stats.totalCycles}}</td>
+                      <td [ngClass]="getCellHighlightClass(result, 'cpi')">{{result.stats.cpi.toFixed(2)}}</td>
+                      <td [ngClass]="getCellHighlightClass(result, 'ipc')">{{result.stats.ipc.toFixed(2)}}</td>
+                      <td [ngClass]="getCellHighlightClass(result, 'stallCycles')">{{result.stats.totalStallCycles}}</td>
+                      <td [ngClass]="getCellHighlightClass(result, 'hazards')">{{result.totalHazards}}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -294,6 +369,17 @@ BEQ x1, x2, loop"
                 <h4>🔍 自动分析</h4>
                 <div class="analysis-content">
                   <p><strong>最优配置：</strong>「{{analysis.bestConfig.config.name}}」CPI 最低，为 {{analysis.bestConfig.stats.cpi.toFixed(2)}}</p>
+
+                  <div *ngIf="analysis.modelDimension" class="dimension-section">
+                    <p class="dimension-title"><strong>📐 流水线模型维度：</strong></p>
+                    <p class="dimension-conclusion">{{analysis.modelDimension.conclusion}}</p>
+                  </div>
+
+                  <div *ngIf="analysis.predictionDimension" class="dimension-section">
+                    <p class="dimension-title"><strong>🎯 分支预测维度：</strong></p>
+                    <p class="dimension-conclusion">{{analysis.predictionDimension.conclusion}}</p>
+                  </div>
+
                   <p *ngIf="analysis.forwardingImpact">
                     <strong>转发效果：</strong>开启转发可将 CPI 从 {{analysis.forwardingImpact.withoutForwardingCpi.toFixed(2)}}
                     降至 {{analysis.forwardingImpact.withForwardingCpi.toFixed(2)}}，
@@ -515,6 +601,25 @@ BEQ x1, x2, loop"
       white-space: nowrap;
     }
 
+    .btn-copy {
+      padding: 2px 6px;
+      font-size: 11px;
+      border: 1px solid #dfe6e9;
+      border-radius: 3px;
+      cursor: pointer;
+      background: white;
+      color: #7f8c8d;
+      flex-shrink: 0;
+      margin-left: 4px;
+      transition: all 0.2s;
+    }
+
+    .btn-copy:hover {
+      background: #3498db;
+      border-color: #3498db;
+      color: white;
+    }
+
     .group-actions {
       display: flex;
       align-items: center;
@@ -721,6 +826,158 @@ BEQ x1, x2, loop"
       margin-bottom: 24px;
     }
 
+    .snapshot-section {
+      margin-bottom: 24px;
+    }
+
+    .snapshot-section h4 {
+      margin: 0 0 12px 0;
+      color: #2c3e50;
+      font-size: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #9b59b6;
+    }
+
+    .snapshot-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .snapshot-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      color: #34495e;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .instruction-count {
+      font-size: 11px;
+      color: #7f8c8d;
+      font-weight: normal;
+    }
+
+    .btn-tiny {
+      padding: 2px 8px;
+      font-size: 10px;
+      border: 1px solid #bdc3c7;
+      border-radius: 3px;
+      cursor: pointer;
+      background: white;
+      color: #7f8c8d;
+      margin-left: auto;
+    }
+
+    .btn-tiny:hover {
+      background: #ecf0f1;
+      color: #34495e;
+    }
+
+    .snapshot-instructions {
+      background: #fafbfc;
+      border-radius: 6px;
+      padding: 12px;
+      border: 1px solid #ecf0f1;
+    }
+
+    .instruction-code {
+      max-height: 60px;
+      overflow: hidden;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 11px;
+      background: white;
+      border-radius: 4px;
+      padding: 8px;
+      border: 1px solid #e9ecef;
+      transition: max-height 0.3s ease;
+    }
+
+    .instruction-code.expanded {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .instruction-line {
+      display: flex;
+      gap: 8px;
+      line-height: 1.6;
+    }
+
+    .instruction-line .line-num {
+      color: #bdc3c7;
+      user-select: none;
+      min-width: 20px;
+      text-align: right;
+    }
+
+    .instruction-line .line-text {
+      color: #2c3e50;
+    }
+
+    .snapshot-configs {
+      background: #fafbfc;
+      border-radius: 6px;
+      padding: 12px;
+      border: 1px solid #ecf0f1;
+    }
+
+    .config-cards {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .config-card {
+      flex: 1 1 calc(50% - 4px);
+      min-width: 120px;
+      background: white;
+      border: 1px solid #e9ecef;
+      border-radius: 4px;
+      padding: 8px;
+      position: relative;
+    }
+
+    .config-card-badge {
+      position: absolute;
+      top: -6px;
+      left: -6px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #3498db;
+      color: white;
+      font-size: 10px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .config-card-name {
+      font-weight: 600;
+      font-size: 12px;
+      color: #2c3e50;
+      margin-bottom: 4px;
+      padding-left: 10px;
+    }
+
+    .config-card-details {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .config-card-details span {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: #ecf0f1;
+      border-radius: 3px;
+      color: #576574;
+    }
+
     .chart-section h4, .table-section h4, .analysis-section h4 {
       margin: 0 0 12px 0;
       color: #2c3e50;
@@ -734,6 +991,58 @@ BEQ x1, x2, loop"
       height: 300px;
       background: #fafbfc;
       border-radius: 4px;
+    }
+
+    .chart-container {
+      position: relative;
+    }
+
+    .chart-tooltip {
+      position: absolute;
+      background: rgba(44, 62, 80, 0.95);
+      color: white;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      pointer-events: none;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      white-space: nowrap;
+      transform: translate(0, -50%);
+    }
+
+    .chart-tooltip::before {
+      content: '';
+      position: absolute;
+      left: -6px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 6px solid transparent;
+      border-right-color: rgba(44, 62, 80, 0.95);
+    }
+
+    .tooltip-title {
+      font-weight: 600;
+      font-size: 13px;
+      margin-bottom: 6px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .tooltip-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      line-height: 1.8;
+    }
+
+    .tooltip-label {
+      color: #bdc3c7;
+    }
+
+    .tooltip-value {
+      font-weight: 600;
+      color: white;
     }
 
     .bar {
@@ -801,6 +1110,18 @@ BEQ x1, x2, loop"
       background: #d5f5e3 !important;
     }
 
+    .data-table td.cell-max {
+      color: #e74c3c;
+      font-weight: 600;
+      background: #fdecea;
+    }
+
+    .data-table td.cell-min {
+      color: #27ae60;
+      font-weight: 600;
+      background: #d5f5e3;
+    }
+
     .analysis-section {
       margin-top: 24px;
     }
@@ -825,6 +1146,27 @@ BEQ x1, x2, loop"
     .recommendation {
       color: #1e8449;
       font-weight: 500;
+    }
+
+    .dimension-section {
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px dashed #bdc3c7;
+    }
+
+    .dimension-section:last-of-type {
+      border-bottom: none;
+      padding-bottom: 0;
+      margin-bottom: 10px;
+    }
+
+    .dimension-title {
+      margin-bottom: 4px !important;
+    }
+
+    .dimension-conclusion {
+      margin-left: 20px !important;
+      color: #34495e;
     }
 
     @media (max-width: 1400px) {
@@ -900,6 +1242,17 @@ SW x9, 4(x0)`;
   isExporting = false;
   canRunExperiments = false;
 
+  readonly diffThreshold = 0.2;
+  highlightedColumns: Set<string> = new Set();
+  columnMinMax: Map<string, { min: number; max: number }> = new Map();
+
+  instructionsExpanded = false;
+
+  tooltipVisible = false;
+  tooltipX = 0;
+  tooltipY = 0;
+  tooltipResult: ExperimentResult | null = null;
+
   readonly chartWidth = 800;
   readonly chartHeight = 300;
   readonly chartPadding = 60;
@@ -954,6 +1307,20 @@ SW x9, 4(x0)`;
       parts.push(predMap[group.branchPrediction] || '预测');
     }
     return parts.join('+');
+  }
+
+  copyGroupConfig(group: ExperimentConfig): void {
+    const configObj: any = {
+      model: group.model,
+      forwarding: group.enableForwarding,
+      stallInsertion: group.enableStallInsertion,
+      branchPrediction: group.branchPrediction || 'none'
+    };
+    const jsonStr = JSON.stringify(configObj);
+    navigator.clipboard.writeText(jsonStr).then(() => {
+    }).catch(err => {
+      console.error('复制失败:', err);
+    });
   }
 
   toggleGroup(index: number): void {
@@ -1077,6 +1444,56 @@ SW x9, 4(x0)`;
       this.sortResults(this.sortField);
     }
     this.analysis = this.generateAnalysis();
+    this.calculateColumnHighlights();
+  }
+
+  private calculateColumnHighlights(): void {
+    this.highlightedColumns.clear();
+    this.columnMinMax.clear();
+
+    const numericColumns = ['cycles', 'cpi', 'ipc', 'stallCycles', 'hazards'];
+
+    for (const col of numericColumns) {
+      const values = this.experimentResults.map(r => this.getColumnValue(r, col));
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+
+      this.columnMinMax.set(col, { min, max });
+
+      if (min > 0) {
+        const diffPercent = (max - min) / min;
+        if (diffPercent > this.diffThreshold) {
+          this.highlightedColumns.add(col);
+        }
+      } else if (max > 0) {
+        this.highlightedColumns.add(col);
+      }
+    }
+  }
+
+  private getColumnValue(result: ExperimentResult, col: string): number {
+    switch (col) {
+      case 'cycles': return result.stats.totalCycles;
+      case 'cpi': return result.stats.cpi;
+      case 'ipc': return result.stats.ipc;
+      case 'stallCycles': return result.stats.totalStallCycles;
+      case 'hazards': return result.totalHazards;
+      default: return 0;
+    }
+  }
+
+  isCellHighlighted(col: string): boolean {
+    return this.highlightedColumns.has(col);
+  }
+
+  getCellHighlightClass(result: ExperimentResult, col: string): string {
+    if (!this.highlightedColumns.has(col)) return '';
+    const minMax = this.columnMinMax.get(col);
+    if (!minMax) return '';
+    const value = this.getColumnValue(result, col);
+    if (value === minMax.max) return 'cell-max';
+    if (value === minMax.min) return 'cell-min';
+    return '';
   }
 
   sortResults(field: string): void {
@@ -1168,6 +1585,45 @@ SW x9, 4(x0)`;
   isBestResult(result: ExperimentResult): boolean {
     if (!this.analysis) return false;
     return result.config.id === this.analysis.bestConfig.config.id;
+  }
+
+  getInstructionLines(): string[] {
+    const lines = this.assemblyCode.split('\n').filter(line => line.trim() !== '');
+    if (this.instructionsExpanded) {
+      return lines;
+    }
+    return lines.slice(0, 3);
+  }
+
+  showTooltip(event: MouseEvent, result: ExperimentResult): void {
+    this.tooltipResult = result;
+    this.tooltipVisible = true;
+    this.updateTooltipPosition(event);
+  }
+
+  moveTooltip(event: MouseEvent): void {
+    this.updateTooltipPosition(event);
+  }
+
+  hideTooltip(): void {
+    this.tooltipVisible = false;
+    this.tooltipResult = null;
+  }
+
+  private updateTooltipPosition(event: MouseEvent): void {
+    const target = event.target as SVGElement;
+    const svg = target.closest('svg');
+    if (!svg) return;
+
+    const rect = svg.getBoundingClientRect();
+    const scaleX = this.chartWidth / rect.width;
+    const scaleY = this.chartHeight / rect.height;
+
+    const offsetX = 15;
+    const offsetY = -10;
+
+    this.tooltipX = event.clientX - rect.left + offsetX;
+    this.tooltipY = event.clientY - rect.top + offsetY;
   }
 
   private getChartMaxValues(): { maxCpi: number; maxCycles: number } {
@@ -1263,7 +1719,88 @@ SW x9, 4(x0)`;
       bestConfig,
       forwardingImpact,
       predictionComparison,
-      recommendation
+      recommendation,
+      modelDimension: this.generateModelDimension(),
+      predictionDimension: this.generatePredictionDimension()
+    };
+  }
+
+  private generateModelDimension(): ExperimentAnalysis['modelDimension'] | undefined {
+    const modelGroups = new Map<string, number[]>();
+
+    for (const result of this.experimentResults) {
+      const model = result.config.model;
+      if (!modelGroups.has(model)) {
+        modelGroups.set(model, []);
+      }
+      modelGroups.get(model)!.push(result.stats.cpi);
+    }
+
+    if (modelGroups.size <= 1) {
+      return undefined;
+    }
+
+    const groups = Array.from(modelGroups.entries()).map(([model, cpis]) => ({
+      model,
+      avgCpi: cpis.reduce((a, b) => a + b, 0) / cpis.length,
+      count: cpis.length
+    }));
+
+    groups.sort((a, b) => a.avgCpi - b.avgCpi);
+
+    const bestModel = groups[0];
+    const worstModel = groups[groups.length - 1];
+    const improvement = ((worstModel.avgCpi - bestModel.avgCpi) / worstModel.avgCpi) * 100;
+
+    const modelName = (m: string) => m === '5-stage' ? '5级流水线' : '7级超流水线';
+    const conclusion = `${modelName(bestModel.model)}平均CPI最低（${bestModel.avgCpi.toFixed(2)}），比${modelName(worstModel.model)}（${worstModel.avgCpi.toFixed(2)}）低 ${improvement.toFixed(1)}%`;
+
+    return {
+      hasVariation: true,
+      groups: groups.map(g => ({
+        model: g.model,
+        avgCpi: g.avgCpi,
+        count: g.count
+      })),
+      conclusion
+    };
+  }
+
+  private generatePredictionDimension(): ExperimentAnalysis['predictionDimension'] | undefined {
+    const predGroups = new Map<string | null, number[]>();
+
+    for (const result of this.experimentResults) {
+      const pred = result.config.branchPrediction;
+      const key = pred || 'none';
+      if (!predGroups.has(key)) {
+        predGroups.set(key, []);
+      }
+      predGroups.get(key)!.push(result.stats.cpi);
+    }
+
+    if (predGroups.size <= 1) {
+      return undefined;
+    }
+
+    const groups = Array.from(predGroups.entries()).map(([strategyKey, cpis]) => ({
+      strategyKey,
+      strategy: strategyKey === 'none' ? '无预测' : this.getPredictionName(strategyKey as BranchPredictionStrategy),
+      avgCpi: cpis.reduce((a, b) => a + b, 0) / cpis.length,
+      count: cpis.length
+    }));
+
+    groups.sort((a, b) => a.avgCpi - b.avgCpi);
+
+    const best = groups[0];
+    const worst = groups[groups.length - 1];
+    const improvement = ((worst.avgCpi - best.avgCpi) / worst.avgCpi) * 100;
+
+    const conclusion = `分支预测策略「${best.strategy}」平均CPI最低（${best.avgCpi.toFixed(2)}），比「${worst.strategy}」（${worst.avgCpi.toFixed(2)}）低 ${improvement.toFixed(1)}%`;
+
+    return {
+      hasVariation: true,
+      groups,
+      conclusion
     };
   }
 
